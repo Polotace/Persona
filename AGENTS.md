@@ -270,6 +270,43 @@ Never hardcode:
 
 Everything should be abstracted.
 
+## General Standards
+
+These rules apply to all code, scripts, tests, and configuration.
+
+* Keep domain logic independent of UI, storage, transport, and model providers.
+* Prefer small modules with one responsibility and explicit input/output types.
+* Do not log conversation content, memory values, prompts, credentials, or access tokens at normal log levels.
+* Return structured errors with actionable context. Do not swallow failures or use empty catch-all handlers.
+* Add tests for behavior changes and regression tests for defects.
+* Document public interfaces, persistent schemas, event payloads, and non-obvious privacy decisions.
+
+## Rust Standards
+
+* Format with `cargo fmt`; lint with `cargo clippy -- -D warnings`.
+* Use `thiserror` for library errors and `anyhow` only at application boundaries.
+* Pass dependencies through traits or constructors; do not access global mutable state.
+* Use `tracing` with structured fields and redact user data by default.
+* Keep crates directional: domain crates must not depend on Tauri, SQLx, HTTP clients, or provider SDKs.
+
+## Python Standards
+
+* Format with Ruff; type-check public APIs with Pyright or an equivalent configured checker.
+* Use Pydantic models for HTTP and service-boundary payloads.
+* Keep FastAPI routes thin; capability logic belongs in service modules.
+* Use dependency injection for model providers, embedding providers, and repositories.
+* Never expose provider-specific response objects outside the AI service boundary.
+
+## Testing and Review
+
+* Unit tests cover domain rules and pure transformations.
+* Contract tests validate Rust-Python request and response schemas.
+* Integration tests use temporary local databases and fake model providers.
+* No test fixture may contain real personal conversations, credentials, or private embeddings.
+* Keep commits focused on one coherent change.
+* Update documentation when a public interface, schema, event, or architectural boundary changes.
+* A reviewer must be able to identify data ownership, failure behavior, and user-control implications from the change.
+
 ---
 
 # 12. Documentation Rules

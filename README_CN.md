@@ -4,7 +4,7 @@
 
 **一个本地优先、持续进化的个人 AI 回复助手。**
 
-[English](../README.md) | 中文
+[English](./README.md) | 中文
 
 </div>
 
