@@ -131,7 +131,7 @@ Persona separates application infrastructure from AI intelligence.
                       │
                       ▼
 
-             Rust ↔ Python IPC
+         Structured Service Interface
 
                       │
                       ▼
@@ -143,7 +143,7 @@ Persona separates application infrastructure from AI intelligence.
       Memory • Style • Retrieval • Reply
 ```
 
-The architecture is documented in **ARCHITECTURE.md**.
+The desktop experience, local storage, and AI capabilities are separated through stable interfaces so each part can evolve independently.
 
 ---
 
@@ -171,48 +171,6 @@ The architecture is documented in **ARCHITECTURE.md**.
 
 * SQLite
 * DuckDB
-* Vector Index (planned)
-
----
-
-## 📚 Documentation
-
-Project documentation is organized as follows.
-
-```text
-README.md
-PLAN.md
-AGENT.md
-ARCHITECTURE.md
-
-docs/
-    MEMORY.md
-    USER_MODEL.md
-    AI_SERVICE.md
-    DATABASE.md
-    IPC.md
-    PLUGIN.md
-    ROADMAP.md
-```
-
-Each document focuses on a single aspect of the system.
-
----
-
-## 📌 Project Status
-
-Current status:
-
-🚧 Planning & Architecture
-
-The project is currently focused on:
-
-* Architecture design
-* Documentation
-* Core abstractions
-* Runtime planning
-
-Implementation will begin after the architecture has stabilized.
 
 ---
 
@@ -225,28 +183,6 @@ Implementation will begin after the architecture has stabilized.
 * Plugin ecosystem
 * Long-term personalization and user control
 * Multi-platform support
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome.
-
-Before implementing new features, please read:
-
-* `PLAN.md`
-* `AGENT.md`
-* `ARCHITECTURE.md`
-
-Architecture discussions are encouraged before implementation.
-
-Maintaining a clean and consistent architecture is more important than adding features quickly.
-
----
-
-## 📄 License
-
-License information will be added before the first public release.
 
 ---
 
