@@ -214,9 +214,17 @@ async fn stop_waits_for_startup_then_completes_shutdown() {
         .await
         .expect("startup should block while opening storage");
 
+    let (stop_started, stop_observer) = oneshot::channel();
     let stopping_runtime = Arc::clone(&runtime);
-    let stop = tokio::spawn(async move { stopping_runtime.stop().await });
-    tokio::task::yield_now().await;
+    let stop = tokio::spawn(async move {
+        stop_started
+            .send(())
+            .expect("stop observer should remain available");
+        stopping_runtime.stop().await
+    });
+    stop_observer
+        .await
+        .expect("stop task should reach the runtime stop operation");
     assert!(
         !stop.is_finished(),
         "stop should wait for the start operation"
