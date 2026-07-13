@@ -79,7 +79,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.97"
 license = "MIT"
 
 [workspace.dependencies]
@@ -91,7 +91,7 @@ Create `rust-toolchain.toml`:
 
 ```toml
 [toolchain]
-channel = "1.85.0"
+channel = "1.97.0"
 profile = "minimal"
 components = ["clippy", "rustfmt"]
 ```

@@ -25,3 +25,7 @@ Data remains local by default. Cloud model requests require an explicit enabled 
 ## Migration and Integrity
 
 Schema changes use ordered, reversible-where-possible migrations. Each migration has an identifier, a forward operation, validation, and a rollback or recovery note. Repositories enforce owner scoping, foreign-key integrity, and transactional updates for multi-record memory transitions.
+
+Audit event timestamps are stored as signed Unix nanoseconds in SQLite `INTEGER` columns. This preserves subsecond precision and supports representable pre-epoch timestamps; values outside the signed 64-bit nanosecond range are rejected without storing the audit record.
+
+Schema version 2 upgrades the Phase 1 `audit_events.created_at` seconds column to `occurred_at` nanoseconds in one transaction. The migration rebuilds the audit table, preserves its records and owner index, and stops without committing when a legacy timestamp cannot be represented as signed nanoseconds.
