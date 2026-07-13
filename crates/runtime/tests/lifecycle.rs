@@ -93,6 +93,46 @@ async fn startup_emits_all_lifecycle_events_with_minimum_configured_capacity() {
     );
 }
 
+#[tokio::test]
+async fn full_lifecycle_is_retained_with_minimum_configured_capacity_without_receiver_drain() {
+    let directory = tempdir().expect("temporary directory");
+    let config = RuntimeConfig::from_toml(&format!(
+        "schema_version = 1\ndata_dir = '{}'\ndatabase_path = 'persona.db'\nlog_level = 'info'\nevent_queue_capacity = 1",
+        directory.path().display()
+    ))
+    .expect("valid configuration");
+    let (dispatcher, mut events) = EventDispatcher::bounded(config.event_queue_capacity);
+    let runtime = Runtime::new(
+        config,
+        Box::new(CapturingLoggerFactory::default()),
+        Box::new(SqliteStorageFactory),
+        dispatcher,
+    );
+
+    runtime.start().await.expect("runtime starts");
+    runtime.stop().await.expect("runtime stops");
+
+    assert_eq!(runtime.state(), RuntimeState::Stopped);
+
+    let mut received = Vec::new();
+    while let Some(event) = events.recv().await {
+        received.push(event);
+    }
+    assert_eq!(
+        received
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RuntimeEventKind::RuntimeStarting,
+            RuntimeEventKind::StorageReady,
+            RuntimeEventKind::RuntimeReady,
+            RuntimeEventKind::RuntimeStopping,
+            RuntimeEventKind::RuntimeStopped,
+        ]
+    );
+}
+
 struct CapturingLogger {
     records: Arc<Mutex<Vec<SafeLogRecord>>>,
 }
