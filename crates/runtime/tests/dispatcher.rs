@@ -12,6 +12,12 @@ async fn dispatcher_enforces_capacity_and_reports_closure() {
         .try_publish(event)
         .expect("the first event should fit in the queue");
 
+    dispatcher
+        .try_publish(event)
+        .expect("startup lifecycle reserve should fit a second event");
+    dispatcher
+        .try_publish(event)
+        .expect("startup lifecycle reserve should fit a third event");
     assert!(matches!(
         dispatcher.try_publish(event),
         Err(EventError::QueueFull)

@@ -131,6 +131,8 @@ Unexpected termination must not leave conversations partially mutated. Recovery 
 
 Phase 1 implements the local Rust runtime foundation as libraries only: versioned configuration, metadata-safe logging, SQLite migration and audit metadata, bounded in-process lifecycle events, and idempotent shutdown. It has no executable host or user-content schema. CLI, desktop UI, and Tauri integration; AI and HTTP integration; plugins and scheduling; and domain storage for conversations, memories, profiles, or replies are explicitly deferred to later milestones.
 
+The Phase 1 configuration accepts only `error`, `warn`, `info`, `debug`, and `trace` logging levels. Runtime hosts choose and install any process-global tracing subscriber; the runtime's injectable logger factory only emits privacy-safe lifecycle records through that host-owned subscriber.
+
 ## 13. Acceptance Criteria
 
 The runtime is ready for Phase 1 implementation when tests demonstrate that:

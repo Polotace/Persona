@@ -7,7 +7,7 @@ use std::{
 use persona_core::{OwnerId, RuntimeEventKind, RuntimeState};
 use persona_database::{AuditRecord, SqliteStorageFactory, Storage, StorageError, StorageFactory};
 use persona_runtime::{
-    EventDispatcher, LoggerFactory, Runtime, RuntimeConfig, RuntimeLogger, SafeLogRecord,
+    EventDispatcher, LogLevel, LoggerFactory, Runtime, RuntimeConfig, RuntimeLogger, SafeLogRecord,
 };
 use tempfile::tempdir;
 use tokio::sync::{Notify, oneshot};
@@ -15,14 +15,82 @@ use tokio::sync::{Notify, oneshot};
 #[derive(Clone, Default)]
 struct CapturingLoggerFactory {
     records: Arc<Mutex<Vec<SafeLogRecord>>>,
+    levels: Arc<Mutex<Vec<LogLevel>>>,
 }
 
 impl LoggerFactory for CapturingLoggerFactory {
-    fn initialize(&self, _log_level: &str) -> Result<Arc<dyn RuntimeLogger>, String> {
+    fn initialize(&self, log_level: LogLevel) -> Result<Arc<dyn RuntimeLogger>, String> {
+        self.levels
+            .lock()
+            .expect("test logger factory mutex should not be poisoned")
+            .push(log_level);
         Ok(Arc::new(CapturingLogger {
             records: Arc::clone(&self.records),
         }))
     }
+}
+
+#[tokio::test]
+async fn runtime_passes_validated_log_level_to_the_injected_logger_factory() {
+    let directory = tempdir().expect("temporary directory");
+    let config = RuntimeConfig::from_toml(&format!(
+        "schema_version = 1\ndata_dir = '{}'\ndatabase_path = 'persona.db'\nlog_level = 'debug'\nevent_queue_capacity = 3",
+        directory.path().display()
+    ))
+    .expect("valid configuration");
+    let (dispatcher, _events) = EventDispatcher::bounded(config.event_queue_capacity);
+    let logger_factory = CapturingLoggerFactory::default();
+    let levels = Arc::clone(&logger_factory.levels);
+    let runtime = Runtime::new(
+        config,
+        Box::new(logger_factory),
+        Box::new(SqliteStorageFactory),
+        dispatcher,
+    );
+
+    runtime.start().await.expect("runtime starts");
+
+    assert_eq!(
+        *levels
+            .lock()
+            .expect("test logger factory mutex should not be poisoned"),
+        vec![LogLevel::Debug]
+    );
+}
+
+#[tokio::test]
+async fn startup_emits_all_lifecycle_events_with_minimum_configured_capacity() {
+    let directory = tempdir().expect("temporary directory");
+    let config = RuntimeConfig::from_toml(&format!(
+        "schema_version = 1\ndata_dir = '{}'\ndatabase_path = 'persona.db'\nlog_level = 'info'\nevent_queue_capacity = 1",
+        directory.path().display()
+    ))
+    .expect("valid configuration");
+    let (dispatcher, mut events) = EventDispatcher::bounded(config.event_queue_capacity);
+    let runtime = Runtime::new(
+        config,
+        Box::new(CapturingLoggerFactory::default()),
+        Box::new(SqliteStorageFactory),
+        dispatcher,
+    );
+
+    runtime.start().await.expect("runtime starts");
+
+    let mut received = Vec::new();
+    for _ in 0..3 {
+        received.push(events.recv().await.expect("startup lifecycle event"));
+    }
+    assert_eq!(
+        received
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RuntimeEventKind::RuntimeStarting,
+            RuntimeEventKind::StorageReady,
+            RuntimeEventKind::RuntimeReady,
+        ]
+    );
 }
 
 struct CapturingLogger {

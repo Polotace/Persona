@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use persona_core::{EventError, RuntimeEvent};
 use tokio::sync::mpsc;
 
+const STARTUP_LIFECYCLE_EVENT_COUNT: usize = 3;
+
 /// Publishes runtime events to a bounded in-process queue.
 #[derive(Clone)]
 pub struct EventDispatcher {
@@ -11,9 +13,13 @@ pub struct EventDispatcher {
 }
 
 impl EventDispatcher {
-    /// Creates a dispatcher and its sole receiver with a validated queue capacity.
+    /// Creates a dispatcher and its sole receiver with enough bounded capacity for startup facts.
+    ///
+    /// A runtime always emits three startup lifecycle events before a consumer can necessarily
+    /// drain the queue. The configured capacity is therefore raised to this small, fixed minimum;
+    /// the queue remains bounded and still reports backpressure once full.
     pub fn bounded(capacity: NonZeroUsize) -> (Self, mpsc::Receiver<RuntimeEvent>) {
-        let (sender, receiver) = mpsc::channel(capacity.get());
+        let (sender, receiver) = mpsc::channel(capacity.get().max(STARTUP_LIFECYCLE_EVENT_COUNT));
         let dispatcher = Self {
             sender: Arc::new(Mutex::new(Some(sender))),
         };

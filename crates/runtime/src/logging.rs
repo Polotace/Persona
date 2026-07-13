@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use persona_core::CorrelationId;
 
+use crate::LogLevel;
+
 /// A lifecycle log entry containing only structural metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SafeLogRecord {
@@ -34,28 +36,59 @@ pub trait RuntimeLogger: Send + Sync {
 /// Creates runtime loggers for a configured logging level.
 pub trait LoggerFactory: Send + Sync {
     /// Initializes a logger using the requested level.
-    fn initialize(&self, log_level: &str) -> Result<Arc<dyn RuntimeLogger>, String>;
+    fn initialize(&self, log_level: LogLevel) -> Result<Arc<dyn RuntimeLogger>, String>;
 }
 
-/// Factory for lifecycle loggers that emit through `tracing`.
+/// Factory for lifecycle loggers that emit through an application-provided `tracing` subscriber.
+///
+/// This factory deliberately does not configure a global subscriber. Application hosts own that
+/// process-wide decision and can replace this factory when they require another logging backend.
 #[derive(Default)]
 pub struct TracingLoggerFactory;
 
 impl LoggerFactory for TracingLoggerFactory {
-    fn initialize(&self, _log_level: &str) -> Result<Arc<dyn RuntimeLogger>, String> {
-        Ok(Arc::new(TracingRuntimeLogger))
+    fn initialize(&self, log_level: LogLevel) -> Result<Arc<dyn RuntimeLogger>, String> {
+        Ok(Arc::new(TracingRuntimeLogger { log_level }))
     }
 }
 
-struct TracingRuntimeLogger;
+struct TracingRuntimeLogger {
+    log_level: LogLevel,
+}
 
 impl RuntimeLogger for TracingRuntimeLogger {
     fn record(&self, record: SafeLogRecord) {
-        tracing::info!(
-            component = record.component,
-            transition = record.transition,
-            correlation_id = ?record.correlation_id,
-            "runtime lifecycle"
-        );
+        match self.log_level {
+            LogLevel::Error => tracing::error!(
+                component = record.component,
+                transition = record.transition,
+                correlation_id = ?record.correlation_id,
+                "runtime lifecycle"
+            ),
+            LogLevel::Warn => tracing::warn!(
+                component = record.component,
+                transition = record.transition,
+                correlation_id = ?record.correlation_id,
+                "runtime lifecycle"
+            ),
+            LogLevel::Info => tracing::info!(
+                component = record.component,
+                transition = record.transition,
+                correlation_id = ?record.correlation_id,
+                "runtime lifecycle"
+            ),
+            LogLevel::Debug => tracing::debug!(
+                component = record.component,
+                transition = record.transition,
+                correlation_id = ?record.correlation_id,
+                "runtime lifecycle"
+            ),
+            LogLevel::Trace => tracing::trace!(
+                component = record.component,
+                transition = record.transition,
+                correlation_id = ?record.correlation_id,
+                "runtime lifecycle"
+            ),
+        }
     }
 }

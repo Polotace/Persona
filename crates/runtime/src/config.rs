@@ -4,6 +4,30 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use thiserror::Error;
 
+/// The logging severities supported by the runtime's metadata-only logger.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    /// Parses a supported configuration value without retaining invalid input.
+    pub fn parse(value: &str) -> Result<Self, ConfigError> {
+        match value {
+            "error" => Ok(Self::Error),
+            "warn" => Ok(Self::Warn),
+            "info" => Ok(Self::Info),
+            "debug" => Ok(Self::Debug),
+            "trace" => Ok(Self::Trace),
+            _ => Err(ConfigError::Invalid("log level is unsupported".to_owned())),
+        }
+    }
+}
+
 /// The only configuration schema currently supported by the runtime.
 pub const CONFIG_SCHEMA_VERSION: u16 = 1;
 
@@ -22,7 +46,7 @@ struct FileConfig {
 pub struct RuntimeConfig {
     pub data_dir: PathBuf,
     pub database_path: PathBuf,
-    pub log_level: String,
+    pub log_level: LogLevel,
     pub event_queue_capacity: NonZeroUsize,
 }
 
@@ -62,10 +86,12 @@ impl RuntimeConfig {
                 ConfigError::Invalid("event queue capacity must be greater than zero".to_owned())
             })?;
 
+        let log_level = LogLevel::parse(&file_config.log_level)?;
+
         Ok(Self {
             data_dir: file_config.data_dir,
             database_path: file_config.database_path,
-            log_level: file_config.log_level,
+            log_level,
             event_queue_capacity,
         })
     }

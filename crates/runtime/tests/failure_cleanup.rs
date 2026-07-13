@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use persona_database::SqliteStorageFactory;
 use persona_runtime::{
-    EventDispatcher, LoggerFactory, Runtime, RuntimeConfig, RuntimeError, RuntimeLogger,
+    EventDispatcher, LogLevel, LoggerFactory, Runtime, RuntimeConfig, RuntimeError, RuntimeLogger,
 };
 use tempfile::tempdir;
 
 struct FailingLoggerFactory;
 
 impl LoggerFactory for FailingLoggerFactory {
-    fn initialize(&self, _log_level: &str) -> Result<Arc<dyn RuntimeLogger>, String> {
+    fn initialize(&self, _log_level: LogLevel) -> Result<Arc<dyn RuntimeLogger>, String> {
         Err("logger initialization failed".to_owned())
     }
 }

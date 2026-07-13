@@ -63,7 +63,7 @@ impl Runtime {
             return Ok(());
         }
 
-        let logger = match self.logger_factory.initialize(&self.config.log_level) {
+        let logger = match self.logger_factory.initialize(self.config.log_level) {
             Ok(logger) => logger,
             Err(_) => {
                 self.fail_start().await;
