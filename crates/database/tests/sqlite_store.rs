@@ -105,6 +105,126 @@ async fn sqlite_lists_audit_records_by_id_when_timestamps_are_equal() {
 }
 
 #[tokio::test]
+async fn sqlite_preserves_nanosecond_timestamps_and_chronological_order() {
+    let directory = tempdir().expect("temporary directory must be created");
+    let factory = SqliteStorageFactory;
+    let store = factory
+        .open(&directory.path().join("persona.db"))
+        .await
+        .expect("SQLite store must open");
+    store.migrate().await.expect("migration must succeed");
+
+    let owner = OwnerId::try_from("owner-a").expect("owner id must be valid");
+    let earlier_timestamp = UNIX_EPOCH + Duration::new(1_000, 100);
+    let later_timestamp = UNIX_EPOCH + Duration::new(1_000, 900);
+    let earlier_id = Uuid::from_u128(1);
+    let later_id = Uuid::from_u128(2);
+    let mut later_record = AuditRecord::new(
+        owner.clone(),
+        AuditActor::System,
+        AuditReason::Migration,
+        CorrelationId::new(),
+    );
+    later_record.id = later_id;
+    later_record.occurred_at = later_timestamp;
+    let mut earlier_record = AuditRecord::new(
+        owner.clone(),
+        AuditActor::System,
+        AuditReason::Migration,
+        CorrelationId::new(),
+    );
+    earlier_record.id = earlier_id;
+    earlier_record.occurred_at = earlier_timestamp;
+
+    store
+        .write_audit(later_record)
+        .await
+        .expect("later audit record must be written first");
+    store
+        .write_audit(earlier_record)
+        .await
+        .expect("earlier audit record must be written second");
+
+    let records = store
+        .list_audit(&owner)
+        .await
+        .expect("audit records must list");
+
+    assert_eq!(
+        records.iter().map(|record| record.id).collect::<Vec<_>>(),
+        vec![earlier_id, later_id]
+    );
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.occurred_at)
+            .collect::<Vec<_>>(),
+        vec![earlier_timestamp, later_timestamp]
+    );
+}
+
+#[tokio::test]
+async fn sqlite_round_trips_pre_epoch_audit_timestamps() {
+    let directory = tempdir().expect("temporary directory must be created");
+    let factory = SqliteStorageFactory;
+    let store = factory
+        .open(&directory.path().join("persona.db"))
+        .await
+        .expect("SQLite store must open");
+    store.migrate().await.expect("migration must succeed");
+
+    let owner = OwnerId::try_from("owner-a").expect("owner id must be valid");
+    let occurred_at = UNIX_EPOCH
+        .checked_sub(Duration::new(1, 123))
+        .expect("test timestamp must be representable");
+    let mut record = AuditRecord::new(
+        owner.clone(),
+        AuditActor::System,
+        AuditReason::Migration,
+        CorrelationId::new(),
+    );
+    record.occurred_at = occurred_at;
+
+    store
+        .write_audit(record)
+        .await
+        .expect("pre-epoch audit record must be written");
+
+    let records = store
+        .list_audit(&owner)
+        .await
+        .expect("audit records must list");
+    assert_eq!(records[0].occurred_at, occurred_at);
+}
+
+#[tokio::test]
+async fn sqlite_rejects_audit_timestamps_outside_unix_nanosecond_range() {
+    let directory = tempdir().expect("temporary directory must be created");
+    let factory = SqliteStorageFactory;
+    let store = factory
+        .open(&directory.path().join("persona.db"))
+        .await
+        .expect("SQLite store must open");
+    store.migrate().await.expect("migration must succeed");
+
+    let owner = OwnerId::try_from("owner-a").expect("owner id must be valid");
+    let mut record = AuditRecord::new(
+        owner,
+        AuditActor::System,
+        AuditReason::Migration,
+        CorrelationId::new(),
+    );
+    record.occurred_at = UNIX_EPOCH
+        .checked_add(Duration::from_secs(i64::MAX as u64 / 1_000_000_000 + 1))
+        .expect("test timestamp must be representable");
+
+    assert!(matches!(
+        store.write_audit(record).await,
+        Err(StorageError::InvalidAuditTimestamp)
+    ));
+}
+
+#[tokio::test]
 async fn sqlite_open_of_missing_parent_returns_unavailable() {
     let directory = tempdir().expect("temporary directory must be created");
     let result = SqliteStorageFactory

@@ -70,7 +70,7 @@ impl Storage for SqliteStorage {
                 actor TEXT NOT NULL, \
                 reason TEXT NOT NULL, \
                 correlation_id TEXT NOT NULL, \
-                created_at INTEGER NOT NULL\
+                occurred_at INTEGER NOT NULL\
             )",
         )
         .execute(&mut *transaction)
@@ -98,13 +98,13 @@ impl Storage for SqliteStorage {
     }
 
     async fn write_audit(&self, record: AuditRecord) -> Result<(), StorageError> {
-        let created_at = timestamp_to_epoch_seconds(record.occurred_at)?;
+        let occurred_at = timestamp_to_epoch_nanoseconds(record.occurred_at)?;
         let mut transaction = self.pool.begin().await.map_err(|error| {
             StorageError::Unavailable(format!("starting audit transaction: {error}"))
         })?;
 
         sqlx::query(
-            "INSERT INTO audit_events (id, owner_id, actor, reason, correlation_id, created_at) \
+            "INSERT INTO audit_events (id, owner_id, actor, reason, correlation_id, occurred_at) \
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(record.id.to_string())
@@ -112,7 +112,7 @@ impl Storage for SqliteStorage {
         .bind(record.actor.as_str())
         .bind(record.reason.as_str())
         .bind(record.correlation_id.as_uuid().to_string())
-        .bind(created_at)
+        .bind(occurred_at)
         .execute(&mut *transaction)
         .await
         .map_err(|error| StorageError::Unavailable(format!("writing audit metadata: {error}")))?;
@@ -124,8 +124,8 @@ impl Storage for SqliteStorage {
 
     async fn list_audit(&self, owner_id: &OwnerId) -> Result<Vec<AuditRecord>, StorageError> {
         let rows = sqlx::query(
-            "SELECT id, actor, reason, correlation_id, created_at \
-             FROM audit_events WHERE owner_id = ? ORDER BY created_at ASC, id ASC",
+            "SELECT id, actor, reason, correlation_id, occurred_at \
+             FROM audit_events WHERE owner_id = ? ORDER BY occurred_at ASC, id ASC",
         )
         .bind(owner_id.as_str())
         .fetch_all(&self.pool)
@@ -142,12 +142,38 @@ impl Storage for SqliteStorage {
     }
 }
 
-fn timestamp_to_epoch_seconds(timestamp: SystemTime) -> Result<i64, StorageError> {
-    let seconds = timestamp
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| StorageError::InvalidAuditMetadata)?
-        .as_secs();
-    i64::try_from(seconds).map_err(|_| StorageError::InvalidAuditMetadata)
+fn timestamp_to_epoch_nanoseconds(timestamp: SystemTime) -> Result<i64, StorageError> {
+    match timestamp.duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            i64::try_from(duration.as_nanos()).map_err(|_| StorageError::InvalidAuditTimestamp)
+        }
+        Err(error) => {
+            let nanoseconds = error.duration().as_nanos();
+            let minimum = (i64::MAX as u128) + 1;
+
+            if nanoseconds > minimum {
+                return Err(StorageError::InvalidAuditTimestamp);
+            }
+            if nanoseconds == minimum {
+                return Ok(i64::MIN);
+            }
+
+            i64::try_from(nanoseconds)
+                .map(|nanoseconds| -nanoseconds)
+                .map_err(|_| StorageError::InvalidAuditTimestamp)
+        }
+    }
+}
+
+fn timestamp_from_epoch_nanoseconds(nanoseconds: i64) -> Result<SystemTime, StorageError> {
+    let duration = Duration::from_nanos(nanoseconds.unsigned_abs());
+    let timestamp = if nanoseconds.is_negative() {
+        UNIX_EPOCH.checked_sub(duration)
+    } else {
+        UNIX_EPOCH.checked_add(duration)
+    };
+
+    timestamp.ok_or(StorageError::InvalidAuditTimestamp)
 }
 
 fn audit_record_from_row(
@@ -182,13 +208,10 @@ fn audit_record_from_row(
         .map_err(|_| StorageError::InvalidAuditMetadata)
         .and_then(|value| Uuid::parse_str(&value).map_err(|_| StorageError::InvalidAuditMetadata))
         .map(CorrelationId::from_uuid)?;
-    let seconds = row
-        .try_get::<i64, _>("created_at")
+    let nanoseconds = row
+        .try_get::<i64, _>("occurred_at")
         .map_err(|_| StorageError::InvalidAuditMetadata)?;
-    let seconds = u64::try_from(seconds).map_err(|_| StorageError::InvalidAuditMetadata)?;
-    let occurred_at = UNIX_EPOCH
-        .checked_add(Duration::from_secs(seconds))
-        .ok_or(StorageError::InvalidAuditMetadata)?;
+    let occurred_at = timestamp_from_epoch_nanoseconds(nanoseconds)?;
 
     Ok(AuditRecord {
         id,

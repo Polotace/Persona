@@ -68,6 +68,8 @@ pub enum StorageError {
     Migration(String),
     #[error("local storage contains invalid audit metadata")]
     InvalidAuditMetadata,
+    #[error("audit timestamp cannot be represented as Unix nanoseconds")]
+    InvalidAuditTimestamp,
 }
 
 #[async_trait]
