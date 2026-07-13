@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/persona-core"]
+members = ["crates/persona-core", "crates/runtime"]
 resolver = "2"
 
 [workspace.package]
