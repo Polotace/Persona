@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use persona_core::{EventError, RuntimeEvent};
@@ -10,9 +11,9 @@ pub struct EventDispatcher {
 }
 
 impl EventDispatcher {
-    /// Creates a dispatcher and its sole receiver with the requested queue capacity.
-    pub fn bounded(capacity: usize) -> (Self, mpsc::Receiver<RuntimeEvent>) {
-        let (sender, receiver) = mpsc::channel(capacity);
+    /// Creates a dispatcher and its sole receiver with a validated queue capacity.
+    pub fn bounded(capacity: NonZeroUsize) -> (Self, mpsc::Receiver<RuntimeEvent>) {
+        let (sender, receiver) = mpsc::channel(capacity.get());
         let dispatcher = Self {
             sender: Arc::new(Mutex::new(Some(sender))),
         };
@@ -25,7 +26,7 @@ impl EventDispatcher {
         let sender = self
             .sender
             .lock()
-            .expect("event dispatcher mutex must not be poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
             .ok_or(EventError::Closed)?;
 
@@ -39,7 +40,7 @@ impl EventDispatcher {
     pub fn close(&self) {
         self.sender
             .lock()
-            .expect("event dispatcher mutex must not be poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
     }
 }

@@ -1,9 +1,11 @@
+use std::num::NonZeroUsize;
+
 use persona_core::{CorrelationId, EventError, RuntimeEvent, SchemaVersion};
 use persona_runtime::EventDispatcher;
 
 #[tokio::test]
 async fn dispatcher_enforces_capacity_and_reports_closure() {
-    let (dispatcher, mut receiver) = EventDispatcher::bounded(1);
+    let (dispatcher, mut receiver) = EventDispatcher::bounded(NonZeroUsize::MIN);
     let event = RuntimeEvent::ready(SchemaVersion::V1, CorrelationId::new());
 
     dispatcher

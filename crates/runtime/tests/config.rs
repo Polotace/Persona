@@ -28,7 +28,10 @@ fn rejects_zero_event_queue_capacity() {
             .as_str(),
     );
 
-    assert!(matches!(result, Err(ConfigError::Invalid(_))));
+    assert!(matches!(
+        result,
+        Err(ConfigError::Invalid(message)) if message == "event queue capacity must be greater than zero"
+    ));
 }
 
 #[test]
