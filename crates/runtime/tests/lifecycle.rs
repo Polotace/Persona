@@ -54,9 +54,11 @@ async fn runtime_publishes_ordered_lifecycle_events_with_one_correlation_id() {
         dispatcher,
     );
 
+    let lifecycle_started_at = SystemTime::now();
     runtime.start().await.expect("runtime starts");
     runtime.stop().await.expect("runtime stops");
     runtime.stop().await.expect("stopping twice is safe");
+    let lifecycle_finished_at = SystemTime::now();
 
     let mut received = Vec::new();
     for _ in 0..5 {
@@ -83,11 +85,9 @@ async fn runtime_publishes_ordered_lifecycle_events_with_one_correlation_id() {
             .iter()
             .all(|event| event.correlation_id() == correlation_id)
     );
-    assert!(
-        received
-            .iter()
-            .all(|event| event.occurred_at() <= SystemTime::now())
-    );
+    assert!(received.iter().all(|event| {
+        event.occurred_at() >= lifecycle_started_at && event.occurred_at() <= lifecycle_finished_at
+    }));
 
     let records = log_records
         .lock()
@@ -97,5 +97,46 @@ async fn runtime_publishes_ordered_lifecycle_events_with_one_correlation_id() {
         records
             .iter()
             .all(|record| record.correlation_id == correlation_id)
+    );
+}
+
+#[tokio::test]
+async fn concurrent_stops_publish_one_shutdown_event_pair() {
+    let directory = tempdir().expect("temporary directory");
+    let config = RuntimeConfig::from_toml(&format!(
+        "schema_version = 1\ndata_dir = '{}'\ndatabase_path = 'persona.db'\nlog_level = 'info'\nevent_queue_capacity = 16",
+        directory.path().display()
+    ))
+    .expect("valid configuration");
+    let (dispatcher, mut events) = EventDispatcher::bounded(config.event_queue_capacity);
+    let runtime = Runtime::new(
+        config,
+        Box::new(CapturingLoggerFactory::default()),
+        Box::new(SqliteStorageFactory),
+        dispatcher,
+    );
+
+    runtime.start().await.expect("runtime starts");
+    let (first_stop, second_stop) = tokio::join!(runtime.stop(), runtime.stop());
+    first_stop.expect("first concurrent stop succeeds");
+    second_stop.expect("second concurrent stop succeeds");
+
+    let mut received = Vec::new();
+    while let Some(event) = events.recv().await {
+        received.push(event);
+    }
+
+    assert_eq!(
+        received
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RuntimeEventKind::RuntimeStarting,
+            RuntimeEventKind::StorageReady,
+            RuntimeEventKind::RuntimeReady,
+            RuntimeEventKind::RuntimeStopping,
+            RuntimeEventKind::RuntimeStopped,
+        ]
     );
 }

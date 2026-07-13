@@ -118,18 +118,10 @@ impl Runtime {
 
     /// Releases initialized resources and publishes shutdown lifecycle events once.
     pub async fn stop(&self) -> Result<(), RuntimeError> {
-        let state = *self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if matches!(state, RuntimeState::Stopped | RuntimeState::Failed) {
-            return Ok(());
-        }
-        if state != RuntimeState::Ready {
+        if !self.transition_from_ready_to_stopping() {
             return Ok(());
         }
 
-        self.set_state(RuntimeState::Stopping);
         let correlation_id = self.correlation_id();
         if let Err(error) =
             self.publish_lifecycle(correlation_id, RuntimeEventKind::RuntimeStopping)
@@ -160,6 +152,19 @@ impl Runtime {
         }
 
         *state = RuntimeState::Starting;
+        true
+    }
+
+    fn transition_from_ready_to_stopping(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *state != RuntimeState::Ready {
+            return false;
+        }
+
+        *state = RuntimeState::Stopping;
         true
     }
 

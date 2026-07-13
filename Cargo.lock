@@ -650,7 +650,9 @@ name = "persona-runtime"
 version = "0.1.0"
 dependencies = [
  "persona-core",
+ "persona-database",
  "serde",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",
