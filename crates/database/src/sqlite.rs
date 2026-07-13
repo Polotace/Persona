@@ -125,7 +125,7 @@ impl Storage for SqliteStorage {
     async fn list_audit(&self, owner_id: &OwnerId) -> Result<Vec<AuditRecord>, StorageError> {
         let rows = sqlx::query(
             "SELECT id, actor, reason, correlation_id, created_at \
-             FROM audit_events WHERE owner_id = ? ORDER BY created_at ASC",
+             FROM audit_events WHERE owner_id = ? ORDER BY created_at ASC, id ASC",
         )
         .bind(owner_id.as_str())
         .fetch_all(&self.pool)
