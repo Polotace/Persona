@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/persona-core", "crates/runtime"]
+members = ["crates/persona-core", "crates/database", "crates/runtime"]
 resolver = "2"
 
 [workspace.package]
@@ -8,6 +8,9 @@ rust-version = "1.97"
 license = "MIT"
 
 [workspace.dependencies]
+async-trait = "0.1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite"] }
+tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
 uuid = { version = "1", features = ["v4"] }
