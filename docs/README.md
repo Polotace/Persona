@@ -24,6 +24,11 @@ This directory contains the engineering documentation for Persona. These documen
 
 ## Planning and Decisions
 
+### Phase 1
+
+- [Phase 1 runtime foundation design](superpowers/specs/2026-07-12-phase-1-runtime-foundation-design.md)
+- [Phase 1 implementation plan](superpowers/plans/2026-07-12-phase-1-runtime-foundation.md)
+
 - [Roadmap](ROADMAP.md): outcome-oriented release milestones.
 - [ADR 0001](adr/0001-service-interface.md): service-interface decision record.
 

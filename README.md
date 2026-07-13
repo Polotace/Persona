@@ -145,6 +145,8 @@ Persona separates application infrastructure from AI intelligence.
 
 The desktop experience, local storage, and AI capabilities are separated through stable interfaces so each part can evolve independently.
 
+Phase 1 currently establishes the local Rust runtime foundation; user-facing applications and AI capabilities follow in later milestones.
+
 ---
 
 ## 🛠 Technology Stack

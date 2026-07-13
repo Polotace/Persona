@@ -127,7 +127,11 @@ On shutdown, the runtime:
 
 Unexpected termination must not leave conversations partially mutated. Recovery on the next startup relies on transactional storage, idempotency keys, and recorded lifecycle state rather than replaying arbitrary provider requests.
 
-## 12. Acceptance Criteria
+## 12. Phase 1 Implementation Slice
+
+Phase 1 implements the local Rust runtime foundation as libraries only: versioned configuration, metadata-safe logging, SQLite migration and audit metadata, bounded in-process lifecycle events, and idempotent shutdown. It has no executable host or user-content schema. CLI, desktop UI, and Tauri integration; AI and HTTP integration; plugins and scheduling; and domain storage for conversations, memories, profiles, or replies are explicitly deferred to later milestones.
+
+## 13. Acceptance Criteria
 
 The runtime is ready for Phase 1 implementation when tests demonstrate that:
 
