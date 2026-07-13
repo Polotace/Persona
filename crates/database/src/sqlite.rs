@@ -2,18 +2,18 @@ use crate::{AuditActor, AuditReason, AuditRecord, Storage, StorageError, Storage
 use async_trait::async_trait;
 use persona_core::{CorrelationId, OwnerId};
 use sqlx::{
-    Row, SqlitePool,
+    Row, Sqlite, SqlitePool, Transaction,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use std::{
     path::Path,
-    str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
 const INITIAL_SCHEMA_VERSION: i64 = 1;
+const AUDIT_NANOSECOND_SCHEMA_VERSION: i64 = 2;
 
 pub struct SqliteStorageFactory;
 
@@ -30,8 +30,7 @@ impl StorageFactory for SqliteStorageFactory {
             ));
         }
 
-        let options = SqliteConnectOptions::from_str("sqlite::memory:")
-            .expect("the built-in SQLite connection string must be valid")
+        let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true);
         let pool = SqlitePoolOptions::new()
@@ -54,41 +53,26 @@ impl Storage for SqliteStorage {
                 StorageError::Migration(format!("starting transaction: {error}"))
             })?;
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS schema_migrations (\
-                version INTEGER PRIMARY KEY, \
-                applied_at TEXT NOT NULL\
-            )",
-        )
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| StorageError::Migration(format!("creating migration state: {error}")))?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS audit_events (\
-                id TEXT PRIMARY KEY, \
-                owner_id TEXT NOT NULL, \
-                actor TEXT NOT NULL, \
-                reason TEXT NOT NULL, \
-                correlation_id TEXT NOT NULL, \
-                occurred_at INTEGER NOT NULL\
-            )",
-        )
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| StorageError::Migration(format!("creating audit metadata: {error}")))?;
+        create_migration_state(&mut transaction).await?;
+        if !migration_is_applied(&mut transaction, INITIAL_SCHEMA_VERSION).await? {
+            ensure_audit_events_table(&mut transaction).await?;
+            record_migration(&mut transaction, INITIAL_SCHEMA_VERSION).await?;
+        }
+
+        if !migration_is_applied(&mut transaction, AUDIT_NANOSECOND_SCHEMA_VERSION).await? {
+            upgrade_audit_events_to_nanoseconds(&mut transaction).await?;
+            record_migration(&mut transaction, AUDIT_NANOSECOND_SCHEMA_VERSION).await?;
+        } else if !audit_events_use_nanoseconds(&mut transaction).await? {
+            return Err(StorageError::Migration(
+                "schema version 2 is recorded but audit events do not use occurred_at".to_owned(),
+            ));
+        }
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_events_owner ON audit_events(owner_id)")
             .execute(&mut *transaction)
             .await
             .map_err(|error| {
                 StorageError::Migration(format!("creating audit owner index: {error}"))
-            })?;
-        sqlx::query("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
-            .bind(INITIAL_SCHEMA_VERSION)
-            .bind("phase-1")
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| {
-                StorageError::Migration(format!("recording schema version: {error}"))
             })?;
 
         transaction
@@ -140,6 +124,166 @@ impl Storage for SqliteStorage {
     async fn close(&self) {
         self.pool.close().await;
     }
+}
+
+async fn create_migration_state(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (\
+            version INTEGER PRIMARY KEY, \
+            applied_at TEXT NOT NULL\
+        )",
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| StorageError::Migration(format!("creating migration state: {error}")))?;
+
+    Ok(())
+}
+
+async fn migration_is_applied(
+    transaction: &mut Transaction<'_, Sqlite>,
+    version: i64,
+) -> Result<bool, StorageError> {
+    sqlx::query("SELECT 1 FROM schema_migrations WHERE version = ?")
+        .bind(version)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map(|row| row.is_some())
+        .map_err(|error| StorageError::Migration(format!("reading schema version: {error}")))
+}
+
+async fn record_migration(
+    transaction: &mut Transaction<'_, Sqlite>,
+    version: i64,
+) -> Result<(), StorageError> {
+    sqlx::query("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+        .bind(version)
+        .bind("phase-1")
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| StorageError::Migration(format!("recording schema version: {error}")))?;
+
+    Ok(())
+}
+
+async fn audit_event_columns(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<Vec<String>, StorageError> {
+    sqlx::query("PRAGMA table_info(audit_events)")
+        .fetch_all(&mut **transaction)
+        .await
+        .map_err(|error| StorageError::Migration(format!("reading audit schema: {error}")))?
+        .into_iter()
+        .map(|row| {
+            row.try_get("name").map_err(|error| {
+                StorageError::Migration(format!("reading audit column name: {error}"))
+            })
+        })
+        .collect()
+}
+
+async fn ensure_audit_events_table(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
+    if audit_event_columns(transaction).await?.is_empty() {
+        create_nanosecond_audit_events_table(transaction).await?;
+    }
+
+    Ok(())
+}
+
+async fn audit_events_use_nanoseconds(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<bool, StorageError> {
+    let columns = audit_event_columns(transaction).await?;
+    Ok(columns.iter().any(|column| column == "occurred_at")
+        && !columns.iter().any(|column| column == "created_at"))
+}
+
+async fn upgrade_audit_events_to_nanoseconds(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
+    let columns = audit_event_columns(transaction).await?;
+    if columns.is_empty() {
+        return create_nanosecond_audit_events_table(transaction).await;
+    }
+    if audit_events_use_nanoseconds(transaction).await? {
+        return Ok(());
+    }
+    if !columns.iter().any(|column| column == "created_at")
+        || columns.iter().any(|column| column == "occurred_at")
+    {
+        return Err(StorageError::Migration(
+            "audit events schema is not compatible with the phase-1 timestamp migration".to_owned(),
+        ));
+    }
+
+    let invalid_timestamp_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_events \
+         WHERE created_at > 9223372036 OR created_at < -9223372036",
+    )
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| {
+        StorageError::Migration(format!("validating legacy audit timestamps: {error}"))
+    })?;
+    if invalid_timestamp_count != 0 {
+        return Err(StorageError::Migration(
+            "legacy audit timestamp is outside the signed nanosecond range".to_owned(),
+        ));
+    }
+
+    sqlx::query("DROP INDEX IF EXISTS idx_audit_events_owner")
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            StorageError::Migration(format!("replacing audit owner index: {error}"))
+        })?;
+    sqlx::query("ALTER TABLE audit_events RENAME TO audit_events_v1")
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            StorageError::Migration(format!("renaming legacy audit events: {error}"))
+        })?;
+    create_nanosecond_audit_events_table(transaction).await?;
+    sqlx::query(
+        "INSERT INTO audit_events (id, owner_id, actor, reason, correlation_id, occurred_at) \
+         SELECT id, owner_id, actor, reason, correlation_id, created_at * 1000000000 \
+         FROM audit_events_v1",
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| StorageError::Migration(format!("copying legacy audit events: {error}")))?;
+    sqlx::query("DROP TABLE audit_events_v1")
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            StorageError::Migration(format!("removing legacy audit events: {error}"))
+        })?;
+
+    Ok(())
+}
+
+async fn create_nanosecond_audit_events_table(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        "CREATE TABLE audit_events (\
+            id TEXT PRIMARY KEY, \
+            owner_id TEXT NOT NULL, \
+            actor TEXT NOT NULL, \
+            reason TEXT NOT NULL, \
+            correlation_id TEXT NOT NULL, \
+            occurred_at INTEGER NOT NULL\
+        )",
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| StorageError::Migration(format!("creating audit metadata: {error}")))?;
+
+    Ok(())
 }
 
 fn timestamp_to_epoch_nanoseconds(timestamp: SystemTime) -> Result<i64, StorageError> {

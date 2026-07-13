@@ -2,6 +2,7 @@ use persona_core::{CorrelationId, OwnerId};
 use persona_database::{
     AuditActor, AuditReason, AuditRecord, SqliteStorageFactory, StorageError, StorageFactory,
 };
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::time::{Duration, UNIX_EPOCH};
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -48,6 +49,120 @@ async fn sqlite_migrates_idempotently_and_scopes_audit_records_to_owner() {
             .expect("other owner audit records must list")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn sqlite_upgrades_legacy_second_timestamps_without_losing_audit_records() {
+    let directory = tempdir().expect("temporary directory must be created");
+    let path = directory.path().join("persona.db");
+    let owner = OwnerId::try_from("owner-a").expect("owner id must be valid");
+    let historical_id = Uuid::from_u128(1);
+    let historical_correlation_id = Uuid::from_u128(2);
+    let historical_seconds = 1_234_567_890_i64;
+
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("legacy database must open");
+    sqlx::query(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    )
+    .execute(&pool)
+    .await
+    .expect("legacy migration state must be created");
+    sqlx::query(
+        "CREATE TABLE audit_events (\
+            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, actor TEXT NOT NULL, reason TEXT NOT NULL, \
+            correlation_id TEXT NOT NULL, created_at INTEGER NOT NULL\
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("legacy audit table must be created");
+    sqlx::query("CREATE INDEX idx_audit_events_owner ON audit_events(owner_id)")
+        .execute(&pool)
+        .await
+        .expect("legacy audit index must be created");
+    sqlx::query("INSERT INTO schema_migrations (version, applied_at) VALUES (1, 'phase-1')")
+        .execute(&pool)
+        .await
+        .expect("legacy schema version must be recorded");
+    sqlx::query(
+        "INSERT INTO audit_events (id, owner_id, actor, reason, correlation_id, created_at) \
+         VALUES (?, ?, 'system', 'migration', ?, ?)",
+    )
+    .bind(historical_id.to_string())
+    .bind(owner.as_str())
+    .bind(historical_correlation_id.to_string())
+    .bind(historical_seconds)
+    .execute(&pool)
+    .await
+    .expect("legacy audit record must be written");
+    pool.close().await;
+
+    let store = SqliteStorageFactory
+        .open(&path)
+        .await
+        .expect("SQLite store must open");
+    store.migrate().await.expect("legacy database must migrate");
+
+    let mut new_record = AuditRecord::new(
+        owner.clone(),
+        AuditActor::System,
+        AuditReason::Migration,
+        CorrelationId::new(),
+    );
+    new_record.id = Uuid::from_u128(3);
+    new_record.occurred_at = UNIX_EPOCH + Duration::new(historical_seconds as u64 + 1, 123);
+    store
+        .write_audit(new_record.clone())
+        .await
+        .expect("audit writes must succeed after upgrade");
+
+    let records = store
+        .list_audit(&owner)
+        .await
+        .expect("upgraded audit records must list");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].id, historical_id);
+    assert_eq!(
+        records[0].correlation_id.as_uuid(),
+        historical_correlation_id
+    );
+    assert_eq!(
+        records[0].occurred_at,
+        UNIX_EPOCH + Duration::from_secs(historical_seconds as u64)
+    );
+    assert_eq!(records[1].id, new_record.id);
+    assert_eq!(records[1].occurred_at, new_record.occurred_at);
+
+    store.close().await;
+    let verification_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(false),
+        )
+        .await
+        .expect("upgraded database must reopen");
+    let migration_version: i64 =
+        sqlx::query_scalar("SELECT version FROM schema_migrations WHERE version = 2")
+            .fetch_one(&verification_pool)
+            .await
+            .expect("nanosecond migration version must be recorded");
+    let stored_nanoseconds: i64 =
+        sqlx::query_scalar("SELECT occurred_at FROM audit_events WHERE id = ?")
+            .bind(historical_id.to_string())
+            .fetch_one(&verification_pool)
+            .await
+            .expect("legacy timestamp must be converted");
+    assert_eq!(migration_version, 2);
+    assert_eq!(stored_nanoseconds, historical_seconds * 1_000_000_000);
 }
 
 #[tokio::test]
