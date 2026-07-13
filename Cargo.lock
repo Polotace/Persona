@@ -649,6 +649,7 @@ dependencies = [
 name = "persona-runtime"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "persona-core",
  "persona-database",
  "serde",

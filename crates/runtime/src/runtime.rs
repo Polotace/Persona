@@ -17,6 +17,7 @@ pub struct Runtime {
     logger_factory: Box<dyn LoggerFactory>,
     storage_factory: Box<dyn StorageFactory>,
     dispatcher: EventDispatcher,
+    operation: AsyncMutex<()>,
     state: Mutex<RuntimeState>,
     storage: AsyncMutex<Option<Arc<dyn Storage>>>,
     logger: Mutex<Option<Arc<dyn RuntimeLogger>>>,
@@ -47,6 +48,7 @@ impl Runtime {
             logger_factory,
             storage_factory,
             dispatcher,
+            operation: AsyncMutex::new(()),
             state: Mutex::new(RuntimeState::New),
             storage: AsyncMutex::new(None),
             logger: Mutex::new(None),
@@ -56,6 +58,7 @@ impl Runtime {
 
     /// Initializes logging and local storage, then publishes readiness lifecycle events.
     pub async fn start(&self) -> Result<(), RuntimeError> {
+        let _operation = self.operation.lock().await;
         if !self.transition_from_new() {
             return Ok(());
         }
@@ -118,6 +121,7 @@ impl Runtime {
 
     /// Releases initialized resources and publishes shutdown lifecycle events once.
     pub async fn stop(&self) -> Result<(), RuntimeError> {
+        let _operation = self.operation.lock().await;
         if !self.transition_from_ready_to_stopping() {
             return Ok(());
         }
@@ -140,6 +144,14 @@ impl Runtime {
         self.cleanup().await;
         self.set_state(RuntimeState::Stopped);
         Ok(())
+    }
+
+    /// Returns the current lifecycle state without exposing mutable runtime internals.
+    pub fn state(&self) -> RuntimeState {
+        *self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn transition_from_new(&self) -> bool {
@@ -233,7 +245,11 @@ impl Runtime {
     }
 
     async fn release_storage(&self) {
-        if let Some(storage) = self.storage.lock().await.take() {
+        let storage = {
+            let mut storage = self.storage.lock().await;
+            storage.take()
+        };
+        if let Some(storage) = storage {
             storage.close().await;
         }
     }
